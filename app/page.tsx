@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { 
   MessageSquare, Plus, PanelLeftClose, PanelLeft, Sparkles, 
   Code, BookOpen, UserCheck, HelpCircle, Copy, Check, Trash2, Send, LogOut, Lock, Mail,
-  Search, Compass, Feather, Download, ChevronDown, Cpu, Square, AlertCircle, RefreshCw
+  Search, Compass, Feather, Download, ChevronDown, Cpu, Square, AlertCircle, RefreshCw, Edit2, X
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { User } from "@supabase/supabase-js";
@@ -90,7 +90,11 @@ export default function ChatApp() {
   const [isMounted, setIsMounted] = useState(false);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
-  // New Classic Golden Features State
+  // Renaming State
+  const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
+  const [renameInput, setRenameInput] = useState("");
+
+  // Classic Golden Features State
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedPersona, setSelectedPersona] = useState<Persona>(PERSONAS[0]);
   const [selectedModel, setSelectedModel] = useState(MODELS[0]);
@@ -145,7 +149,7 @@ export default function ChatApp() {
           loadedChats.push({
             id: conv.id,
             title: conv.title,
-            messages: msgs ? msgs.map(m => ({ id: m.id, role: m.role as "user" | "assistant" | "system", content: m.content })) : []
+            messages: msgs ? msgs.map(m => ({ id: m.id, role: m.role as "user" | "assistant", content: m.content })) : []
           });
         }
         setChats(loadedChats);
@@ -198,13 +202,35 @@ export default function ChatApp() {
     setChats([]);
   };
 
-  // Stop Generation Trigger
   const handleStopGeneration = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
       setIsTyping(false);
     }
+  };
+
+  // Chat Renaming Handlers
+  const startRenaming = (chat: Chat, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRenamingChatId(chat.id);
+    setRenameInput(chat.title);
+  };
+
+  const saveRename = async (chatId: string, e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!renameInput.trim()) {
+      setRenamingChatId(null);
+      return;
+    }
+
+    await supabase
+      .from("conversations")
+      .update({ title: renameInput.trim() })
+      .eq("id", chatId);
+
+    setChats(prev => prev.map(c => c.id === chatId ? { ...c, title: renameInput.trim() } : c));
+    setRenamingChatId(null);
   };
 
   const handleSendMessage = async (textToSend?: string) => {
@@ -233,7 +259,6 @@ export default function ChatApp() {
       });
     }
 
-    // Save user message to Supabase
     await supabase.from("messages").insert({
       id: userMsg.id,
       conversation_id: currentChatId,
@@ -271,7 +296,6 @@ export default function ChatApp() {
       return chat;
     }));
 
-    // Setup AbortController for stream cancellation
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
@@ -336,7 +360,6 @@ export default function ChatApp() {
         }
       }
 
-      // Save final AI message to Supabase if content was generated
       if (accumulatedContent) {
         await supabase.from("messages").insert({
           id: aiMsgId,
@@ -348,7 +371,7 @@ export default function ChatApp() {
 
     } catch (err: any) {
       if (err.name === "AbortError") {
-        // Stream aborted gracefully by user
+        // Stream aborted gracefully
       } else {
         console.error("AI Streaming Error:", err);
         setErrorBanner("Connection lost or request timed out. Please try again.");
@@ -545,15 +568,17 @@ export default function ChatApp() {
           </div>
         </div>
 
-        {/* Conversation List */}
+        {/* Conversation List with Inline Renaming */}
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
           {filteredChats.map(chat => (
             <div
               key={chat.id}
               onClick={() => {
-                handleStopGeneration();
-                setActiveChatId(chat.id);
-                setErrorBanner(null);
+                if (renamingChatId !== chat.id) {
+                  handleStopGeneration();
+                  setActiveChatId(chat.id);
+                  setErrorBanner(null);
+                }
               }}
               className={`group flex items-center justify-between px-3 py-2 rounded-lg text-sm cursor-pointer transition border ${
                 chat.id === activeChatId 
@@ -561,17 +586,54 @@ export default function ChatApp() {
                   : "border-transparent hover:bg-zinc-800/50 text-zinc-400 hover:text-amber-100"
               }`}
             >
-              <div className="flex items-center gap-2 truncate">
-                <MessageSquare className={`w-4 h-4 shrink-0 ${chat.id === activeChatId ? "text-amber-400" : "text-zinc-500"}`} />
-                <span className="truncate">{chat.title}</span>
-              </div>
-              <button
-                onClick={(e) => deleteChat(chat.id, e)}
-                className="opacity-0 group-hover:opacity-100 p-1 text-zinc-500 hover:text-red-400 rounded transition"
-                title="Delete chat"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
+              {renamingChatId === chat.id ? (
+                <form 
+                  onSubmit={(e) => saveRename(chat.id, e)} 
+                  className="flex items-center gap-1 w-full"
+                >
+                  <input
+                    type="text"
+                    autoFocus
+                    value={renameInput}
+                    onChange={(e) => setRenameInput(e.target.value)}
+                    className="w-full bg-zinc-950 border border-amber-500/50 rounded px-2 py-1 text-xs text-amber-50 focus:outline-none"
+                  />
+                  <button type="submit" className="text-amber-400 hover:text-amber-300 p-1" title="Save">
+                    <Check className="w-3.5 h-3.5" />
+                  </button>
+                  <button 
+                    type="button" 
+                    onClick={() => setRenamingChatId(null)} 
+                    className="text-zinc-500 hover:text-zinc-300 p-1" 
+                    title="Cancel"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </form>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 truncate flex-1">
+                    <MessageSquare className={`w-4 h-4 shrink-0 ${chat.id === activeChatId ? "text-amber-400" : "text-zinc-500"}`} />
+                    <span className="truncate">{chat.title}</span>
+                  </div>
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
+                    <button
+                      onClick={(e) => startRenaming(chat, e)}
+                      className="p-1 text-zinc-500 hover:text-amber-400 rounded transition"
+                      title="Rename chat"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={(e) => deleteChat(chat.id, e)}
+                      className="p-1 text-zinc-500 hover:text-red-400 rounded transition"
+                      title="Delete chat"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           ))}
         </div>
@@ -790,7 +852,7 @@ export default function ChatApp() {
             )}
           </div>
           <p className="text-center text-[11px] text-zinc-500 mt-2">
-            Mugisha Steven
+            GrandChat Gold Edition • Classic Golden Persona & Supabase Sync Active
           </p>
         </div>
 
