@@ -790,7 +790,7 @@ export default function ChatApp() {
             )}
           </div>
           <p className="text-center text-[11px] text-zinc-500 mt-2">
-            GrandChat Gold Edition • Classic Golden Persona & Supabase Sync Active
+            Mugisha Steven
           </p>
         </div>
 
