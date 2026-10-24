@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { 
   MessageSquare, Plus, PanelLeftClose, PanelLeft, Sparkles, 
   Code, BookOpen, UserCheck, HelpCircle, Copy, Check, Trash2, Send, LogOut, Lock, Mail,
-  Search, Compass, Feather, Download, ChevronDown, Cpu, Square, AlertCircle, RefreshCw, Edit2, X
+  Search, Compass, Feather, Download, ChevronDown, Cpu, Square, AlertCircle, RefreshCw, Edit2, X, Terminal
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { User } from "@supabase/supabase-js";
@@ -73,6 +73,60 @@ const SUGGESTED_PROMPTS = [
   { icon: HelpCircle, title: "General questions", prompt: "Explain quantum computing in simple terms for a beginner." },
 ];
 
+// Inline Markdown Renderer for Code Blocks, Headings, and Lists
+function MarkdownRenderer({ content, onCopyCode, copiedCodeId }: { content: string; onCopyCode: (code: string, id: string) => void; copiedCodeId: string | null }) {
+  const parts = content.split(/(```[\s\S]*?```)/g);
+
+  return (
+    <div className="space-y-2 text-sm leading-relaxed">
+      {parts.map((part, index) => {
+        if (part.startsWith("```") && part.endsWith("```")) {
+          const firstLineEnd = part.indexOf("\n");
+          const language = part.slice(3, firstLineEnd > -1 ? firstLineEnd : 3).trim() || "code";
+          const codeText = firstLineEnd > -1 ? part.slice(firstLineEnd + 1, -3) : part.slice(3, -3);
+          const blockId = `code-${index}`;
+
+          return (
+            <div key={index} className="my-3 rounded-xl border border-amber-900/40 bg-zinc-950 overflow-hidden shadow-lg">
+              <div className="flex items-center justify-between px-4 py-2 bg-zinc-900/90 border-b border-amber-900/30 text-xs text-zinc-400">
+                <div className="flex items-center gap-2">
+                  <Terminal className="w-3.5 h-3.5 text-amber-500" />
+                  <span className="font-mono text-amber-200/80 lowercase">{language}</span>
+                </div>
+                <button
+                  onClick={() => onCopyCode(codeText, blockId)}
+                  className="flex items-center gap-1 text-[11px] text-amber-400/80 hover:text-amber-300 transition"
+                >
+                  {copiedCodeId === blockId ? (
+                    <>
+                      <Check className="w-3 h-3 text-emerald-400" />
+                      <span className="text-emerald-400">Copied</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3 h-3" />
+                      <span>Copy Code</span>
+                    </>
+                  )}
+                </button>
+              </div>
+              <pre className="p-4 overflow-x-auto font-mono text-xs text-amber-100/90 leading-normal">
+                <code>{codeText}</code>
+              </pre>
+            </div>
+          );
+        }
+
+        return (
+          <p key={index} className="whitespace-pre-wrap">
+            {part}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function ChatApp() {
   const [user, setUser] = useState<User | null>(null);
   const [authEmail, setAuthEmail] = useState("");
@@ -87,6 +141,7 @@ export default function ChatApp() {
   const [inputMessage, setInputMessage] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
   const [isMounted, setIsMounted] = useState(false);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
@@ -210,7 +265,6 @@ export default function ChatApp() {
     }
   };
 
-  // Chat Renaming Handlers
   const startRenaming = (chat: Chat, e: React.MouseEvent) => {
     e.stopPropagation();
     setRenamingChatId(chat.id);
@@ -421,6 +475,12 @@ export default function ChatApp() {
     navigator.clipboard.writeText(text);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
+  };
+
+  const copyCodeToClipboard = (code: string, id: string) => {
+    navigator.clipboard.writeText(code);
+    setCopiedCodeId(id);
+    setTimeout(() => setCopiedCodeId(null), 2000);
   };
 
   const handleExportMarkdown = () => {
@@ -756,7 +816,7 @@ export default function ChatApp() {
                       AI
                     </div>
                   )}
-                  <div className={`group relative max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                  <div className={`group relative max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
                     msg.role === "user"
                       ? "bg-gradient-to-r from-amber-500 to-amber-600 text-zinc-950 font-medium shadow-md shadow-amber-950/30"
                       : "bg-zinc-900/90 text-amber-50 border border-amber-900/40 shadow-md"
@@ -767,7 +827,7 @@ export default function ChatApp() {
                         <span>Scribe is contemplating...</span>
                       </div>
                     ) : (
-                      <p className="whitespace-pre-wrap">{msg.content}</p>
+                      <MarkdownRenderer content={msg.content} onCopyCode={copyCodeToClipboard} copiedCodeId={copiedCodeId} />
                     )}
                     {msg.role === "assistant" && msg.content && (
                       <div className="absolute right-2 -bottom-3 opacity-0 group-hover:opacity-100 transition flex items-center gap-1 bg-zinc-900 border border-amber-900/50 rounded-md shadow-lg px-2 py-0.5">
@@ -776,7 +836,7 @@ export default function ChatApp() {
                           className="text-amber-400/80 hover:text-amber-300 flex items-center gap-1 text-xs"
                         >
                           {copiedId === msg.id ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                          <span>{copiedId === msg.id ? "Copied" : "Copy"}</span>
+                          <span>{copiedId === msg.id ? "Copied" : "Copy Full Message"}</span>
                         </button>
                       </div>
                     )}
@@ -852,7 +912,7 @@ export default function ChatApp() {
             )}
           </div>
           <p className="text-center text-[11px] text-zinc-500 mt-2">
-            GrandChat Gold Edition • Classic Golden Persona & Supabase Sync Active
+            Mugisha Steven
           </p>
         </div>
 
