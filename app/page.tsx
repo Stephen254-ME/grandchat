@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { 
   MessageSquare, Plus, PanelLeftClose, PanelLeft, Sparkles, 
   Code, BookOpen, UserCheck, HelpCircle, Copy, Check, Trash2, Send, LogOut, Lock, Mail,
@@ -73,7 +73,6 @@ const SUGGESTED_PROMPTS = [
   { icon: HelpCircle, title: "General questions", prompt: "Explain quantum computing in simple terms for a beginner." },
 ];
 
-// Inline Markdown Renderer for Code Blocks, Headings, and Lists
 function MarkdownRenderer({ content, onCopyCode, copiedCodeId }: { content: string; onCopyCode: (code: string, id: string) => void; copiedCodeId: string | null }) {
   const parts = content.split(/(```[\s\S]*?```)/g);
 
@@ -94,8 +93,10 @@ function MarkdownRenderer({ content, onCopyCode, copiedCodeId }: { content: stri
                   <span className="font-mono text-amber-200/80 lowercase">{language}</span>
                 </div>
                 <button
+                  type="button"
                   onClick={() => onCopyCode(codeText, blockId)}
-                  className="flex items-center gap-1 text-[11px] text-amber-400/80 hover:text-amber-300 transition"
+                  className="flex items-center gap-1 text-[11px] text-amber-400/80 hover:text-amber-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded px-1 transition"
+                  aria-label="Copy code block to clipboard"
                 >
                   {copiedCodeId === blockId ? (
                     <>
@@ -118,9 +119,9 @@ function MarkdownRenderer({ content, onCopyCode, copiedCodeId }: { content: stri
         }
 
         return (
-          <p key={index} className="whitespace-pre-wrap">
+          <div key={index} className="whitespace-pre-wrap">
             {part}
-          </p>
+          </div>
         );
       })}
     </div>
@@ -145,11 +146,9 @@ export default function ChatApp() {
   const [isMounted, setIsMounted] = useState(false);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
-  // Renaming State
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
   const [renameInput, setRenameInput] = useState("");
 
-  // Classic Golden Features State
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedPersona, setSelectedPersona] = useState<Persona>(PERSONAS[0]);
   const [selectedModel, setSelectedModel] = useState(MODELS[0]);
@@ -158,7 +157,19 @@ export default function ChatApp() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Check Auth State on mount
+  // Keyboard Shortcuts (Escape to close modals)
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (e.key === "Escape") {
+      setShowExportModal(false);
+      setRenamingChatId(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
+
   useEffect(() => {
     setIsMounted(true);
     supabase.auth.getSession().then(({ data: { session } }: any) => {
@@ -172,7 +183,6 @@ export default function ChatApp() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Fetch chats from Supabase when user logs in
   useEffect(() => {
     if (user) {
       fetchUserChats();
@@ -204,7 +214,7 @@ export default function ChatApp() {
           loadedChats.push({
             id: conv.id,
             title: conv.title,
-            messages: msgs ? msgs.map(m => ({ id: m.id, role: m.role as "user" | "assistant", content: m.content })) : []
+            messages: msgs ? msgs.map((m: any) => ({ id: m.id, role: m.role as "user" | "assistant" | "system", content: m.content })) : []
           });
         }
         setChats(loadedChats);
@@ -407,7 +417,7 @@ export default function ChatApp() {
                   }));
                 }
               } catch (e) {
-                // Ignore parse errors on incomplete chunk lines
+                // Ignore incomplete line chunks
               }
             }
           }
@@ -580,8 +590,9 @@ export default function ChatApp() {
 
           <div className="mt-6 text-center text-xs">
             <button
+              type="button"
               onClick={() => setIsSignUp(!isSignUp)}
-              className="text-amber-400 hover:underline"
+              className="text-amber-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded"
             >
               {isSignUp ? "Already have an account? Sign In" : "Don't have an account? Sign Up"}
             </button>
@@ -596,18 +607,25 @@ export default function ChatApp() {
     <div className="dark bg-zinc-950 text-amber-50 flex h-screen overflow-hidden font-sans">
       
       {/* SIDEBAR */}
-      <aside className={`${sidebarOpen ? "w-64" : "w-0 -ml-64"} transition-all duration-300 flex flex-col border-r border-amber-900/30 bg-zinc-900/90 z-20 shrink-0 backdrop-blur-md`}>
+      <aside 
+        className={`${sidebarOpen ? "w-64" : "w-0 -ml-64"} transition-all duration-300 flex flex-col border-r border-amber-900/30 bg-zinc-900/90 z-20 shrink-0 backdrop-blur-md`}
+        aria-label="Conversation History"
+      >
         <div className="p-3 flex items-center justify-between border-b border-amber-900/30">
           <button 
+            type="button"
             onClick={createNewChat}
-            className="flex-1 flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 px-3 py-2 rounded-lg text-sm font-semibold transition shadow-md shadow-amber-950/40"
+            className="flex-1 flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 px-3 py-2 rounded-lg text-sm font-semibold transition shadow-md shadow-amber-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+            aria-label="Create a new chat"
           >
             <Plus className="w-4 h-4" />
             New Chat
           </button>
           <button 
+            type="button"
             onClick={() => setSidebarOpen(false)}
-            className="ml-2 p-2 text-amber-400/70 hover:text-amber-300 hover:bg-zinc-800/80 rounded-lg transition"
+            className="ml-2 p-2 text-amber-400/70 hover:text-amber-300 hover:bg-zinc-800/80 rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+            aria-label="Close sidebar"
             title="Close Sidebar"
           >
             <PanelLeftClose className="w-5 h-5" />
@@ -623,16 +641,18 @@ export default function ChatApp() {
               placeholder="Search archives..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-zinc-950/60 border border-amber-900/30 rounded-lg pl-9 pr-3 py-2 text-xs text-amber-50 placeholder-zinc-500 focus:outline-none focus:border-amber-500/50"
+              className="w-full bg-zinc-950/60 border border-amber-900/30 rounded-lg pl-9 pr-3 py-2 text-xs text-amber-50 placeholder-zinc-500 focus:outline-none focus:border-amber-500/50 focus-visible:ring-2 focus-visible:ring-amber-500/60"
+              aria-label="Search past conversations"
             />
           </div>
         </div>
 
         {/* Conversation List with Inline Renaming */}
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+        <div className="flex-1 overflow-y-auto p-2 space-y-1" role="list">
           {filteredChats.map(chat => (
             <div
               key={chat.id}
+              role="listitem"
               onClick={() => {
                 if (renamingChatId !== chat.id) {
                   handleStopGeneration();
@@ -657,15 +677,17 @@ export default function ChatApp() {
                     value={renameInput}
                     onChange={(e) => setRenameInput(e.target.value)}
                     className="w-full bg-zinc-950 border border-amber-500/50 rounded px-2 py-1 text-xs text-amber-50 focus:outline-none"
+                    aria-label="Rename conversation"
                   />
-                  <button type="submit" className="text-amber-400 hover:text-amber-300 p-1" title="Save">
+                  <button type="submit" className="text-amber-400 hover:text-amber-300 p-1" title="Save title" aria-label="Save title">
                     <Check className="w-3.5 h-3.5" />
                   </button>
                   <button 
                     type="button" 
                     onClick={() => setRenamingChatId(null)} 
                     className="text-zinc-500 hover:text-zinc-300 p-1" 
-                    title="Cancel"
+                    title="Cancel renaming"
+                    aria-label="Cancel renaming"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
@@ -678,16 +700,20 @@ export default function ChatApp() {
                   </div>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition">
                     <button
+                      type="button"
                       onClick={(e) => startRenaming(chat, e)}
-                      className="p-1 text-zinc-500 hover:text-amber-400 rounded transition"
+                      className="p-1 text-zinc-500 hover:text-amber-400 rounded transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-500"
                       title="Rename chat"
+                      aria-label={`Rename chat ${chat.title}`}
                     >
                       <Edit2 className="w-3.5 h-3.5" />
                     </button>
                     <button
+                      type="button"
                       onClick={(e) => deleteChat(chat.id, e)}
-                      className="p-1 text-zinc-500 hover:text-red-400 rounded transition"
+                      className="p-1 text-zinc-500 hover:text-red-400 rounded transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-400"
                       title="Delete chat"
+                      aria-label={`Delete chat ${chat.title}`}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -702,9 +728,11 @@ export default function ChatApp() {
         <div className="p-3 border-t border-amber-900/30 flex items-center justify-between text-xs text-amber-500/70">
           <span className="truncate max-w-[140px]" title={user.email}>{user.email}</span>
           <button
+            type="button"
             onClick={handleSignOut}
-            className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-red-400 transition"
+            className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-red-400 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
             title="Sign Out"
+            aria-label="Sign out"
           >
             <LogOut className="w-4 h-4" />
           </button>
@@ -719,9 +747,11 @@ export default function ChatApp() {
           <div className="flex items-center gap-3">
             {!sidebarOpen && (
               <button 
+                type="button"
                 onClick={() => setSidebarOpen(true)}
-                className="p-2 text-amber-400/70 hover:text-amber-300 hover:bg-zinc-800/80 rounded-lg transition"
+                className="p-2 text-amber-400/70 hover:text-amber-300 hover:bg-zinc-800/80 rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
                 title="Open Sidebar"
+                aria-label="Open Sidebar"
               >
                 <PanelLeft className="w-5 h-5" />
               </button>
@@ -729,7 +759,11 @@ export default function ChatApp() {
 
             {/* Scribe Persona Dropdown */}
             <div className="relative group">
-              <button className="flex items-center gap-2 bg-zinc-900/90 border border-amber-900/40 hover:border-amber-500/50 px-3 py-1.5 rounded-lg text-xs font-medium text-amber-200 transition">
+              <button 
+                type="button"
+                className="flex items-center gap-2 bg-zinc-900/90 border border-amber-900/40 hover:border-amber-500/50 px-3 py-1.5 rounded-lg text-xs font-medium text-amber-200 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                aria-label="Select Scribe Persona"
+              >
                 {selectedPersona.icon}
                 <span>{selectedPersona.name}</span>
                 <ChevronDown className="w-3.5 h-3.5 text-amber-500/70" />
@@ -738,6 +772,7 @@ export default function ChatApp() {
                 {PERSONAS.map(p => (
                   <button
                     key={p.id}
+                    type="button"
                     onClick={() => setSelectedPersona(p)}
                     className={`w-full text-left p-2 rounded-lg flex items-center gap-2 text-xs transition ${
                       selectedPersona.id === p.id ? "bg-amber-950/40 text-amber-200" : "text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
@@ -762,8 +797,10 @@ export default function ChatApp() {
 
           <div className="flex items-center gap-2">
             <button
+              type="button"
               onClick={() => setShowExportModal(true)}
-              className="flex items-center gap-1.5 text-xs text-amber-400/80 hover:text-amber-300 border border-amber-900/30 hover:border-amber-500/40 px-3 py-1.5 rounded-lg transition"
+              className="flex items-center gap-1.5 text-xs text-amber-400/80 hover:text-amber-300 border border-amber-900/30 hover:border-amber-500/40 px-3 py-1.5 rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+              aria-label="Export Manuscript"
             >
               <Download className="w-3.5 h-3.5" />
               <span>Export Manuscript</span>
@@ -791,8 +828,9 @@ export default function ChatApp() {
                   return (
                     <button
                       key={idx}
+                      type="button"
                       onClick={() => handleSendMessage(item.prompt)}
-                      className="p-4 rounded-xl border border-amber-900/30 hover:border-amber-500/60 bg-zinc-900/40 hover:bg-amber-950/20 text-left transition flex flex-col gap-2 group shadow-sm"
+                      className="p-4 rounded-xl border border-amber-900/30 hover:border-amber-500/60 bg-zinc-900/40 hover:bg-amber-950/20 text-left transition flex flex-col gap-2 group shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
                     >
                       <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 group-hover:bg-amber-500 group-hover:text-zinc-950 transition">
                         <Icon className="w-4 h-4" />
@@ -832,8 +870,10 @@ export default function ChatApp() {
                     {msg.role === "assistant" && msg.content && (
                       <div className="absolute right-2 -bottom-3 opacity-0 group-hover:opacity-100 transition flex items-center gap-1 bg-zinc-900 border border-amber-900/50 rounded-md shadow-lg px-2 py-0.5">
                         <button 
+                          type="button"
                           onClick={() => copyToClipboard(msg.content, msg.id)}
-                          className="text-amber-400/80 hover:text-amber-300 flex items-center gap-1 text-xs"
+                          className="text-amber-400/80 hover:text-amber-300 flex items-center gap-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-500 rounded"
+                          aria-label="Copy full message"
                         >
                           {copiedId === msg.id ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
                           <span>{copiedId === msg.id ? "Copied" : "Copy Full Message"}</span>
@@ -861,6 +901,7 @@ export default function ChatApp() {
               <span>{errorBanner}</span>
             </div>
             <button
+              type="button"
               onClick={() => {
                 const lastUserMsg = [...(activeChat?.messages || [])].reverse().find((m) => m.role === "user");
                 if (lastUserMsg) {
@@ -868,7 +909,7 @@ export default function ChatApp() {
                   handleSendMessage(lastUserMsg.content);
                 }
               }}
-              className="flex items-center space-x-1 font-semibold hover:underline"
+              className="flex items-center space-x-1 font-semibold hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-500 rounded"
             >
               <RefreshCw className="w-3 h-3" />
               <span>Retry</span>
@@ -884,51 +925,62 @@ export default function ChatApp() {
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
+                if ((e.key === "Enter" && !e.shiftKey) || (e.key === "Enter" && (e.ctrlKey || e.metaKey))) {
                   e.preventDefault();
                   handleSendMessage();
                 }
               }}
-              placeholder={`Ask ${selectedPersona.name} anything... (Press Enter to send)`}
+              placeholder={`Ask ${selectedPersona.name} anything... (Press Enter or Ctrl+Enter to send)`}
               className="w-full resize-none rounded-xl border border-amber-900/40 bg-zinc-900/80 px-4 py-3 pr-12 text-sm text-amber-50 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-amber-500/60 focus:border-amber-500 transition shadow-inner"
+              aria-label="Type your message"
             />
             {isTyping ? (
               <button
                 type="button"
                 onClick={handleStopGeneration}
-                className="absolute right-3 bottom-3 p-2 rounded-lg bg-zinc-800 text-amber-400 hover:bg-zinc-700 transition shadow-md"
+                className="absolute right-3 bottom-3 p-2 rounded-lg bg-zinc-800 text-amber-400 hover:bg-zinc-700 transition shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
                 title="Stop Generating"
+                aria-label="Stop Generating"
               >
                 <Square className="w-4 h-4 fill-current" />
               </button>
             ) : (
               <button
+                type="button"
                 onClick={() => handleSendMessage()}
                 disabled={!inputMessage.trim()}
-                className="absolute right-3 bottom-3 p-2 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 text-zinc-950 hover:from-amber-400 hover:to-amber-500 disabled:opacity-30 disabled:hover:from-amber-500 disabled:hover:to-amber-600 transition shadow-md shadow-amber-950/40"
+                className="absolute right-3 bottom-3 p-2 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 text-zinc-950 hover:from-amber-400 hover:to-amber-500 disabled:opacity-30 disabled:hover:from-amber-500 disabled:hover:to-amber-600 transition shadow-md shadow-amber-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+                aria-label="Send Message"
               >
                 <Send className="w-4 h-4" />
               </button>
             )}
           </div>
           <p className="text-center text-[11px] text-zinc-500 mt-2">
-            Mugisha Steven
+            GrandChat Gold Edition • Press Enter or Ctrl+Enter to send • Esc to close modals
           </p>
         </div>
 
       </main>
 
-      {/* --- Parchment Manuscript Export Modal --- */}
+      {/* Parchment Manuscript Export Modal */}
       {showExportModal && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div 
+          className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-title"
+        >
           <div className="bg-zinc-900 border border-amber-900/50 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-amber-900/30 pb-3">
-              <h3 className="font-serif font-bold text-lg text-amber-200">
+              <h3 id="modal-title" className="font-serif font-bold text-lg text-amber-200">
                 Archival Manuscript Export
               </h3>
               <button
+                type="button"
                 onClick={() => setShowExportModal(false)}
-                className="text-zinc-500 hover:text-zinc-300"
+                className="text-zinc-500 hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded p-1"
+                aria-label="Close modal"
               >
                 ✕
               </button>
@@ -938,14 +990,16 @@ export default function ChatApp() {
             </p>
             <div className="flex justify-end gap-3 pt-2">
               <button
+                type="button"
                 onClick={() => setShowExportModal(false)}
-                className="px-4 py-2 rounded-lg text-xs text-zinc-400 hover:bg-zinc-800"
+                className="px-4 py-2 rounded-lg text-xs text-zinc-400 hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
               >
                 Cancel
               </button>
               <button
+                type="button"
                 onClick={handleExportMarkdown}
-                className="px-4 py-2 rounded-lg bg-gradient-to-r from-amber-200 via-amber-400 to-amber-600 text-zinc-950 font-semibold text-xs shadow-md hover:brightness-110"
+                className="px-4 py-2 rounded-lg bg-gradient-to-r from-amber-200 via-amber-400 to-amber-600 text-zinc-950 font-semibold text-xs shadow-md hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
               >
                 Download Manuscript (.md)
               </button>
