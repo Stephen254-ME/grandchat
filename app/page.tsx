@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { 
   MessageSquare, Plus, PanelLeftClose, PanelLeft, Sparkles, 
   Code, BookOpen, UserCheck, HelpCircle, Copy, Check, Trash2, Send, LogOut, Lock, Mail,
-  Search, Compass, Feather, Download, ChevronDown, Cpu, Square, AlertCircle, RefreshCw, Edit2, X, Terminal
+  Search, Compass, Feather, Download, ChevronDown, Cpu, Square, AlertCircle, RefreshCw, Edit2, X, Terminal, Settings2, Sliders
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { User } from "@supabase/supabase-js";
@@ -95,8 +95,8 @@ function MarkdownRenderer({ content, onCopyCode, copiedCodeId }: { content: stri
                 <button
                   type="button"
                   onClick={() => onCopyCode(codeText, blockId)}
-                  className="flex items-center gap-1 text-[11px] text-amber-400/80 hover:text-amber-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded px-1 transition"
-                  aria-label="Copy code block to clipboard"
+                  className="flex items-center gap-1 text-[11px] text-amber-400/80 hover:text-amber-300 transition"
+                  aria-label="Copy code block"
                 >
                   {copiedCodeId === blockId ? (
                     <>
@@ -146,21 +146,42 @@ export default function ChatApp() {
   const [isMounted, setIsMounted] = useState(false);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
+  // Renaming State & Delete Confirmation
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
   const [renameInput, setRenameInput] = useState("");
+  const [deletingChatId, setDeletingChatId] = useState<string | null>(null);
 
+  // Classic Golden Features & Scribe Customization State
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedPersona, setSelectedPersona] = useState<Persona>(PERSONAS[0]);
   const [selectedModel, setSelectedModel] = useState(MODELS[0]);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [temperature, setTemperature] = useState<number>(0.7);
+  const [responseLength, setResponseLength] = useState<"concise" | "balanced" | "detailed">("balanced");
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Keyboard Shortcuts (Escape to close modals)
+  // Auto-resize textarea as prompt grows
+  const adjustTextareaHeight = () => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 180)}px`;
+    }
+  };
+
+  useEffect(() => {
+    adjustTextareaHeight();
+  }, [inputMessage]);
+
+  // Keyboard Shortcuts (Escape closes modals)
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.key === "Escape") {
       setShowExportModal(false);
+      setShowSettingsModal(false);
+      setDeletingChatId(null);
       setRenamingChatId(null);
     }
   }, []);
@@ -229,9 +250,10 @@ export default function ChatApp() {
 
   const activeChat = chats.find(c => c.id === activeChatId) || chats[0];
 
+  // Auto-scroll to bottom on load and message updates
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [activeChat?.messages, isTyping]);
+  }, [activeChatId, activeChat?.messages?.length, isTyping]);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -245,7 +267,7 @@ export default function ChatApp() {
           password: authPassword,
         });
         if (error) throw error;
-        alert("Check your email for confirmation link or sign in directly if email confirmation is disabled in Supabase!");
+        alert("Check your email for confirmation link!");
       } else {
         const { error } = await supabase.auth.signInWithPassword({
           email: authEmail,
@@ -297,53 +319,84 @@ export default function ChatApp() {
     setRenamingChatId(null);
   };
 
-  const handleSendMessage = async (textToSend?: string) => {
+  const confirmDeleteChat = async () => {
+    if (!deletingChatId) return;
+    handleStopGeneration();
+    await supabase.from("conversations").delete().eq("id", deletingChatId);
+
+    const filtered = chats.filter(c => c.id !== deletingChatId);
+    setDeletingChatId(null);
+
+    if (filtered.length === 0) {
+      createNewChat();
+    } else {
+      setChats(filtered);
+      if (activeChatId === deletingChatId) setActiveChatId(filtered[0].id);
+    }
+  };
+
+  // User Local Time / Date Context Generator
+  const getUserTimeContext = () => {
+    const now = new Date();
+    const hours = now.getHours();
+    let timeOfDay = "morning";
+    if (hours >= 12 && hours < 17) timeOfDay = "afternoon";
+    else if (hours >= 17 && hours < 22) timeOfDay = "evening";
+    else if (hours >= 22 || hours < 5) timeOfDay = "night";
+
+    return {
+      dateTime: now.toLocaleString(),
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      timeOfDay,
+    };
+  };
+
+  const handleSendMessage = async (textToSend?: string, isRegenerating = false) => {
     const text = textToSend || inputMessage;
     if (!text.trim() || !user || isTyping) return;
 
     setErrorBanner(null);
-    if (!textToSend) setInputMessage("");
+    if (!textToSend && !isRegenerating) setInputMessage("");
 
-    const userMsg: Message = {
-      id: Date.now().toString(),
-      role: "user",
-      content: text
-    };
+    let newMessagesList = [...(activeChat?.messages || [])];
 
-    let currentChatId = activeChatId;
-    let currentTitle = activeChat?.title || "New Conversation";
-    const isFirstMessage = activeChat?.messages.length === 0;
+    if (!isRegenerating) {
+      const userMsg: Message = {
+        id: Date.now().toString(),
+        role: "user",
+        content: text
+      };
 
-    if (isFirstMessage) {
-      currentTitle = text.slice(0, 30) + (text.length > 30 ? "..." : "");
-      await supabase.from("conversations").upsert({
-        id: currentChatId,
-        user_id: user.id,
-        title: currentTitle
+      let currentChatId = activeChatId;
+      let currentTitle = activeChat?.title || "New Conversation";
+      const isFirstMessage = activeChat?.messages.length === 0;
+
+      if (isFirstMessage) {
+        currentTitle = text.slice(0, 30) + (text.length > 30 ? "..." : "");
+        await supabase.from("conversations").upsert({
+          id: currentChatId,
+          user_id: user.id,
+          title: currentTitle
+        });
+      }
+
+      await supabase.from("messages").insert({
+        id: userMsg.id,
+        conversation_id: currentChatId,
+        role: userMsg.role,
+        content: userMsg.content
       });
+
+      newMessagesList = [...newMessagesList, userMsg];
+
+      setChats(prev => prev.map(chat => {
+        if (chat.id === currentChatId) {
+          return { ...chat, title: currentTitle, messages: newMessagesList };
+        }
+        return chat;
+      }));
     }
 
-    await supabase.from("messages").insert({
-      id: userMsg.id,
-      conversation_id: currentChatId,
-      role: userMsg.role,
-      content: userMsg.content
-    });
-
-    const newMessagesList = [...(activeChat?.messages || []), userMsg];
-
-    const updatedChats = chats.map(chat => {
-      if (chat.id === currentChatId) {
-        return {
-          ...chat,
-          title: currentTitle,
-          messages: newMessagesList
-        };
-      }
-      return chat;
-    });
-
-    setChats(updatedChats);
     setIsTyping(true);
 
     const aiMsgId = (Date.now() + 1).toString();
@@ -354,8 +407,8 @@ export default function ChatApp() {
     };
 
     setChats(prev => prev.map(chat => {
-      if (chat.id === currentChatId) {
-        return { ...chat, messages: [...chat.messages, initialAiMsg] };
+      if (chat.id === activeChatId) {
+        return { ...chat, messages: [...newMessagesList, initialAiMsg] };
       }
       return chat;
     }));
@@ -364,17 +417,18 @@ export default function ChatApp() {
     abortControllerRef.current = controller;
 
     try {
-      const payloadMessages = [
-        { role: "system", content: selectedPersona.systemPrompt },
-        ...newMessagesList.map(m => ({ role: m.role, content: m.content }))
-      ];
+      const payloadMessages = newMessagesList.map(m => ({ role: m.role, content: m.content }));
 
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
           messages: payloadMessages,
-          model: selectedModel.id 
+          model: selectedModel.id,
+          persona: selectedPersona.systemPrompt,
+          userContext: getUserTimeContext(),
+          temperature,
+          responseLength
         }),
         signal: controller.signal,
       });
@@ -405,7 +459,7 @@ export default function ChatApp() {
                   accumulatedContent += contentChunk;
 
                   setChats(prev => prev.map(chat => {
-                    if (chat.id === currentChatId) {
+                    if (chat.id === activeChatId) {
                       return {
                         ...chat,
                         messages: chat.messages.map(m => 
@@ -417,7 +471,7 @@ export default function ChatApp() {
                   }));
                 }
               } catch (e) {
-                // Ignore incomplete line chunks
+                // Ignore incomplete chunks
               }
             }
           }
@@ -427,7 +481,7 @@ export default function ChatApp() {
       if (accumulatedContent) {
         await supabase.from("messages").insert({
           id: aiMsgId,
-          conversation_id: currentChatId,
+          conversation_id: activeChatId,
           role: "assistant",
           content: accumulatedContent
         });
@@ -443,6 +497,13 @@ export default function ChatApp() {
     } finally {
       setIsTyping(false);
       abortControllerRef.current = null;
+    }
+  };
+
+  const handleRegenerateResponse = () => {
+    const lastUserMsg = [...(activeChat?.messages || [])].reverse().find(m => m.role === "user");
+    if (lastUserMsg) {
+      handleSendMessage(lastUserMsg.content, true);
     }
   };
 
@@ -465,20 +526,6 @@ export default function ChatApp() {
     setChats([newChat, ...chats]);
     setActiveChatId(newChat.id);
     setErrorBanner(null);
-  };
-
-  const deleteChat = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    handleStopGeneration();
-    await supabase.from("conversations").delete().eq("id", id);
-
-    const filtered = chats.filter(c => c.id !== id);
-    if (filtered.length === 0) {
-      createNewChat();
-    } else {
-      setChats(filtered);
-      if (activeChatId === id) setActiveChatId(filtered[0].id);
-    }
   };
 
   const copyToClipboard = (text: string, id: string) => {
@@ -592,7 +639,7 @@ export default function ChatApp() {
             <button
               type="button"
               onClick={() => setIsSignUp(!isSignUp)}
-              className="text-amber-400 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded"
+              className="text-amber-400 hover:underline"
             >
               {isSignUp ? "Already have an account? Sign In" : "Don't have an account? Sign Up"}
             </button>
@@ -615,8 +662,7 @@ export default function ChatApp() {
           <button 
             type="button"
             onClick={createNewChat}
-            className="flex-1 flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 px-3 py-2 rounded-lg text-sm font-semibold transition shadow-md shadow-amber-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
-            aria-label="Create a new chat"
+            className="flex-1 flex items-center gap-2 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-zinc-950 px-3 py-2 rounded-lg text-sm font-semibold transition shadow-md shadow-amber-950/40"
           >
             <Plus className="w-4 h-4" />
             New Chat
@@ -624,15 +670,14 @@ export default function ChatApp() {
           <button 
             type="button"
             onClick={() => setSidebarOpen(false)}
-            className="ml-2 p-2 text-amber-400/70 hover:text-amber-300 hover:bg-zinc-800/80 rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-            aria-label="Close sidebar"
+            className="ml-2 p-2 text-amber-400/70 hover:text-amber-300 hover:bg-zinc-800/80 rounded-lg transition"
             title="Close Sidebar"
           >
             <PanelLeftClose className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Search Input for Archives */}
+        {/* Search Input */}
         <div className="px-3 pt-3">
           <div className="relative">
             <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-amber-500/50" />
@@ -641,18 +686,16 @@ export default function ChatApp() {
               placeholder="Search archives..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-zinc-950/60 border border-amber-900/30 rounded-lg pl-9 pr-3 py-2 text-xs text-amber-50 placeholder-zinc-500 focus:outline-none focus:border-amber-500/50 focus-visible:ring-2 focus-visible:ring-amber-500/60"
-              aria-label="Search past conversations"
+              className="w-full bg-zinc-950/60 border border-amber-900/30 rounded-lg pl-9 pr-3 py-2 text-xs text-amber-50 placeholder-zinc-500 focus:outline-none focus:border-amber-500/50"
             />
           </div>
         </div>
 
-        {/* Conversation List with Inline Renaming */}
-        <div className="flex-1 overflow-y-auto p-2 space-y-1" role="list">
+        {/* Conversation List */}
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
           {filteredChats.map(chat => (
             <div
               key={chat.id}
-              role="listitem"
               onClick={() => {
                 if (renamingChatId !== chat.id) {
                   handleStopGeneration();
@@ -677,17 +720,14 @@ export default function ChatApp() {
                     value={renameInput}
                     onChange={(e) => setRenameInput(e.target.value)}
                     className="w-full bg-zinc-950 border border-amber-500/50 rounded px-2 py-1 text-xs text-amber-50 focus:outline-none"
-                    aria-label="Rename conversation"
                   />
-                  <button type="submit" className="text-amber-400 hover:text-amber-300 p-1" title="Save title" aria-label="Save title">
+                  <button type="submit" className="text-amber-400 hover:text-amber-300 p-1">
                     <Check className="w-3.5 h-3.5" />
                   </button>
                   <button 
                     type="button" 
                     onClick={() => setRenamingChatId(null)} 
-                    className="text-zinc-500 hover:text-zinc-300 p-1" 
-                    title="Cancel renaming"
-                    aria-label="Cancel renaming"
+                    className="text-zinc-500 hover:text-zinc-300 p-1"
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
@@ -702,18 +742,19 @@ export default function ChatApp() {
                     <button
                       type="button"
                       onClick={(e) => startRenaming(chat, e)}
-                      className="p-1 text-zinc-500 hover:text-amber-400 rounded transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-500"
+                      className="p-1 text-zinc-500 hover:text-amber-400 rounded transition"
                       title="Rename chat"
-                      aria-label={`Rename chat ${chat.title}`}
                     >
                       <Edit2 className="w-3.5 h-3.5" />
                     </button>
                     <button
                       type="button"
-                      onClick={(e) => deleteChat(chat.id, e)}
-                      className="p-1 text-zinc-500 hover:text-red-400 rounded transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-400"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeletingChatId(chat.id);
+                      }}
+                      className="p-1 text-zinc-500 hover:text-red-400 rounded transition"
                       title="Delete chat"
-                      aria-label={`Delete chat ${chat.title}`}
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -724,15 +765,14 @@ export default function ChatApp() {
           ))}
         </div>
 
-        {/* Sidebar Footer with Sign Out */}
+        {/* Sidebar Footer */}
         <div className="p-3 border-t border-amber-900/30 flex items-center justify-between text-xs text-amber-500/70">
           <span className="truncate max-w-[140px]" title={user.email}>{user.email}</span>
           <button
             type="button"
             onClick={handleSignOut}
-            className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-red-400 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400"
+            className="p-1.5 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-red-400 transition"
             title="Sign Out"
-            aria-label="Sign out"
           >
             <LogOut className="w-4 h-4" />
           </button>
@@ -742,28 +782,23 @@ export default function ChatApp() {
       {/* MAIN CHAT AREA */}
       <main className="flex-1 flex flex-col h-full relative overflow-hidden bg-gradient-to-b from-zinc-950 via-zinc-900 to-zinc-950">
         
-        {/* Header with Personas and Model Dropdowns */}
+        {/* Header */}
         <header className="h-14 border-b border-amber-900/30 flex items-center justify-between px-4 shrink-0 bg-zinc-950/60 backdrop-blur-md">
           <div className="flex items-center gap-3">
             {!sidebarOpen && (
               <button 
                 type="button"
                 onClick={() => setSidebarOpen(true)}
-                className="p-2 text-amber-400/70 hover:text-amber-300 hover:bg-zinc-800/80 rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                className="p-2 text-amber-400/70 hover:text-amber-300 hover:bg-zinc-800/80 rounded-lg transition"
                 title="Open Sidebar"
-                aria-label="Open Sidebar"
               >
                 <PanelLeft className="w-5 h-5" />
               </button>
             )}
 
-            {/* Scribe Persona Dropdown */}
+            {/* Persona Selector */}
             <div className="relative group">
-              <button 
-                type="button"
-                className="flex items-center gap-2 bg-zinc-900/90 border border-amber-900/40 hover:border-amber-500/50 px-3 py-1.5 rounded-lg text-xs font-medium text-amber-200 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-                aria-label="Select Scribe Persona"
-              >
+              <button className="flex items-center gap-2 bg-zinc-900/90 border border-amber-900/40 hover:border-amber-500/50 px-3 py-1.5 rounded-lg text-xs font-medium text-amber-200 transition">
                 {selectedPersona.icon}
                 <span>{selectedPersona.name}</span>
                 <ChevronDown className="w-3.5 h-3.5 text-amber-500/70" />
@@ -788,7 +823,7 @@ export default function ChatApp() {
               </div>
             </div>
 
-            {/* Model Badge / Selector */}
+            {/* Model Badge */}
             <div className="hidden sm:flex items-center gap-1.5 bg-zinc-900/60 border border-amber-900/30 px-2.5 py-1 rounded-lg text-[11px] text-amber-200/80">
               <Cpu className="w-3.5 h-3.5 text-amber-500" />
               <span>{selectedModel.name}</span>
@@ -798,17 +833,24 @@ export default function ChatApp() {
           <div className="flex items-center gap-2">
             <button
               type="button"
+              onClick={() => setShowSettingsModal(true)}
+              className="p-2 text-zinc-400 hover:text-amber-300 border border-amber-900/30 hover:border-amber-500/40 rounded-lg transition"
+              title="Scribe Parameters"
+            >
+              <Sliders className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
               onClick={() => setShowExportModal(true)}
-              className="flex items-center gap-1.5 text-xs text-amber-400/80 hover:text-amber-300 border border-amber-900/30 hover:border-amber-500/40 px-3 py-1.5 rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-              aria-label="Export Manuscript"
+              className="flex items-center gap-1.5 text-xs text-amber-400/80 hover:text-amber-300 border border-amber-900/30 hover:border-amber-500/40 px-3 py-1.5 rounded-lg transition"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>Export Manuscript</span>
+              <span className="hidden sm:inline">Export Manuscript</span>
             </button>
           </div>
         </header>
 
-        {/* Chat Messages or Welcome Screen */}
+        {/* Chat Messages */}
         <div className="flex-1 overflow-y-auto px-4 py-6">
           {activeChat?.messages.filter(m => m.role !== "system").length === 0 ? (
             <div className="max-w-2xl mx-auto h-full flex flex-col items-center justify-center text-center">
@@ -830,7 +872,7 @@ export default function ChatApp() {
                       key={idx}
                       type="button"
                       onClick={() => handleSendMessage(item.prompt)}
-                      className="p-4 rounded-xl border border-amber-900/30 hover:border-amber-500/60 bg-zinc-900/40 hover:bg-amber-950/20 text-left transition flex flex-col gap-2 group shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                      className="p-4 rounded-xl border border-amber-900/30 hover:border-amber-500/60 bg-zinc-900/40 hover:bg-amber-950/20 text-left transition flex flex-col gap-2 group shadow-sm"
                     >
                       <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 group-hover:bg-amber-500 group-hover:text-zinc-950 transition">
                         <Icon className="w-4 h-4" />
@@ -844,7 +886,7 @@ export default function ChatApp() {
             </div>
           ) : (
             <div className="max-w-3xl mx-auto space-y-6">
-              {activeChat?.messages.filter(m => m.role !== "system").map((msg) => (
+              {activeChat?.messages.filter(m => m.role !== "system").map((msg, idx, arr) => (
                 <div 
                   key={msg.id} 
                   className={`flex gap-4 ${msg.role === "user" ? "justify-end" : "justify-start"}`}
@@ -872,12 +914,22 @@ export default function ChatApp() {
                         <button 
                           type="button"
                           onClick={() => copyToClipboard(msg.content, msg.id)}
-                          className="text-amber-400/80 hover:text-amber-300 flex items-center gap-1 text-xs focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-500 rounded"
-                          aria-label="Copy full message"
+                          className="text-amber-400/80 hover:text-amber-300 flex items-center gap-1 text-xs"
                         >
                           {copiedId === msg.id ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                          <span>{copiedId === msg.id ? "Copied" : "Copy Full Message"}</span>
+                          <span>{copiedId === msg.id ? "Copied" : "Copy"}</span>
                         </button>
+                        {idx === arr.length - 1 && !isTyping && (
+                          <button
+                            type="button"
+                            onClick={handleRegenerateResponse}
+                            className="text-amber-400/80 hover:text-amber-300 flex items-center gap-1 text-xs pl-1 border-l border-zinc-700"
+                            title="Regenerate Response"
+                          >
+                            <RefreshCw className="w-3 h-3" />
+                            <span>Retry</span>
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -902,14 +954,8 @@ export default function ChatApp() {
             </div>
             <button
               type="button"
-              onClick={() => {
-                const lastUserMsg = [...(activeChat?.messages || [])].reverse().find((m) => m.role === "user");
-                if (lastUserMsg) {
-                  setErrorBanner(null);
-                  handleSendMessage(lastUserMsg.content);
-                }
-              }}
-              className="flex items-center space-x-1 font-semibold hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-amber-500 rounded"
+              onClick={handleRegenerateResponse}
+              className="flex items-center space-x-1 font-semibold hover:underline"
             >
               <RefreshCw className="w-3 h-3" />
               <span>Retry</span>
@@ -917,10 +963,11 @@ export default function ChatApp() {
           </div>
         )}
 
-        {/* Input Bar Footer */}
+        {/* Auto-Resizing Input Bar */}
         <div className="p-4 border-t border-amber-900/30 bg-zinc-950/80 shrink-0 backdrop-blur-md">
           <div className="max-w-3xl mx-auto relative">
             <textarea
+              ref={textareaRef}
               rows={1}
               value={inputMessage}
               onChange={(e) => setInputMessage(e.target.value)}
@@ -930,17 +977,15 @@ export default function ChatApp() {
                   handleSendMessage();
                 }
               }}
-              placeholder={`Ask ${selectedPersona.name} anything... (Press Enter or Ctrl+Enter to send)`}
-              className="w-full resize-none rounded-xl border border-amber-900/40 bg-zinc-900/80 px-4 py-3 pr-12 text-sm text-amber-50 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-amber-500/60 focus:border-amber-500 transition shadow-inner"
-              aria-label="Type your message"
+              placeholder={`Ask ${selectedPersona.name} anything... (Press Enter to send)`}
+              className="w-full resize-none rounded-xl border border-amber-900/40 bg-zinc-900/80 px-4 py-3 pr-12 text-sm text-amber-50 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-amber-500/60 focus:border-amber-500 transition shadow-inner overflow-y-auto max-h-44"
             />
             {isTyping ? (
               <button
                 type="button"
                 onClick={handleStopGeneration}
-                className="absolute right-3 bottom-3 p-2 rounded-lg bg-zinc-800 text-amber-400 hover:bg-zinc-700 transition shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                className="absolute right-3 bottom-3 p-2 rounded-lg bg-zinc-800 text-amber-400 hover:bg-zinc-700 transition shadow-md"
                 title="Stop Generating"
-                aria-label="Stop Generating"
               >
                 <Square className="w-4 h-4 fill-current" />
               </button>
@@ -949,57 +994,134 @@ export default function ChatApp() {
                 type="button"
                 onClick={() => handleSendMessage()}
                 disabled={!inputMessage.trim()}
-                className="absolute right-3 bottom-3 p-2 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 text-zinc-950 hover:from-amber-400 hover:to-amber-500 disabled:opacity-30 disabled:hover:from-amber-500 disabled:hover:to-amber-600 transition shadow-md shadow-amber-950/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
-                aria-label="Send Message"
+                className="absolute right-3 bottom-3 p-2 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 text-zinc-950 hover:from-amber-400 hover:to-amber-500 disabled:opacity-30 disabled:hover:from-amber-500 disabled:hover:to-amber-600 transition shadow-md shadow-amber-950/40"
               >
                 <Send className="w-4 h-4" />
               </button>
             )}
           </div>
           <p className="text-center text-[11px] text-zinc-500 mt-2">
-            GrandChat by Mugisha Steven
+            GrandChat Gold Edition • Auto-Time Sync Active • Shift+Enter for line break
           </p>
         </div>
 
       </main>
 
-      {/* Parchment Manuscript Export Modal */}
-      {showExportModal && (
-        <div 
-          className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="modal-title"
-        >
-          <div className="bg-zinc-900 border border-amber-900/50 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-amber-900/30 pb-3">
-              <h3 id="modal-title" className="font-serif font-bold text-lg text-amber-200">
-                Archival Manuscript Export
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowExportModal(false)}
-                className="text-zinc-500 hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 rounded p-1"
-                aria-label="Close modal"
-              >
-                ✕
-              </button>
-            </div>
+      {/* Delete Confirmation Modal */}
+      {deletingChatId && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-zinc-900 border border-amber-900/50 rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-2xl">
+            <h3 className="font-semibold text-base text-amber-200">Delete Conversation?</h3>
             <p className="text-xs text-zinc-400">
-              Download your current conversation transcript formatted as an archival markdown manuscript (`.md`).
+              Are you sure you want to delete this chat session? This action cannot be undone.
             </p>
             <div className="flex justify-end gap-3 pt-2">
               <button
                 type="button"
-                onClick={() => setShowExportModal(false)}
-                className="px-4 py-2 rounded-lg text-xs text-zinc-400 hover:bg-zinc-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                onClick={() => setDeletingChatId(null)}
+                className="px-4 py-2 rounded-lg text-xs text-zinc-400 hover:bg-zinc-800"
               >
                 Cancel
               </button>
               <button
                 type="button"
+                onClick={confirmDeleteChat}
+                className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white font-medium text-xs shadow-md"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Scribe Parameters / Tuning Modal */}
+      {showSettingsModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-zinc-900 border border-amber-900/50 rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-amber-900/30 pb-3">
+              <div className="flex items-center gap-2 text-amber-200 font-semibold text-sm">
+                <Sliders className="w-4 h-4 text-amber-500" />
+                <span>Scribe Execution Parameters</span>
+              </div>
+              <button type="button" onClick={() => setShowSettingsModal(false)} className="text-zinc-500 hover:text-zinc-300">✕</button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div>
+                <label className="block font-medium text-zinc-300 mb-1">
+                  Creativity (Temperature): <span className="text-amber-400">{temperature}</span>
+                </label>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.0"
+                  step="0.05"
+                  value={temperature}
+                  onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                  className="w-full accent-amber-500 bg-zinc-800 rounded-lg cursor-pointer"
+                />
+                <div className="flex justify-between text-[10px] text-zinc-500 mt-1">
+                  <span>Precise / Fact-based (0.1)</span>
+                  <span>Creative (1.0)</span>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-medium text-zinc-300 mb-1">Verbosity / Response Length</label>
+                <div className="grid grid-cols-3 gap-2 mt-1">
+                  {(["concise", "balanced", "detailed"] as const).map((len) => (
+                    <button
+                      key={len}
+                      type="button"
+                      onClick={() => setResponseLength(len)}
+                      className={`py-2 rounded-lg border text-xs capitalize transition ${
+                        responseLength === len
+                          ? "bg-amber-500/20 border-amber-500/50 text-amber-300 font-semibold"
+                          : "border-zinc-800 text-zinc-400 hover:bg-zinc-800"
+                      }`}
+                    >
+                      {len}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end pt-2 border-t border-amber-900/30">
+              <button
+                type="button"
+                onClick={() => setShowSettingsModal(false)}
+                className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-semibold text-xs"
+              >
+                Save Preferences
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Parchment Manuscript Export Modal */}
+      {showExportModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-zinc-900 border border-amber-900/50 rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-amber-900/30 pb-3">
+              <h3 className="font-serif font-bold text-lg text-amber-200">
+                Archival Manuscript Export
+              </h3>
+              <button type="button" onClick={() => setShowExportModal(false)} className="text-zinc-500 hover:text-zinc-300">✕</button>
+            </div>
+            <p className="text-xs text-zinc-400">
+              Download your current conversation transcript formatted as an archival markdown manuscript (`.md`).
+            </p>
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" onClick={() => setShowExportModal(false)} className="px-4 py-2 rounded-lg text-xs text-zinc-400 hover:bg-zinc-800">
+                Cancel
+              </button>
+              <button
+                type="button"
                 onClick={handleExportMarkdown}
-                className="px-4 py-2 rounded-lg bg-gradient-to-r from-amber-200 via-amber-400 to-amber-600 text-zinc-950 font-semibold text-xs shadow-md hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-400"
+                className="px-4 py-2 rounded-lg bg-gradient-to-r from-amber-200 via-amber-400 to-amber-600 text-zinc-950 font-semibold text-xs shadow-md hover:brightness-110"
               >
                 Download Manuscript (.md)
               </button>

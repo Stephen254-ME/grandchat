@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 
-export const runtime = "edge"; // Low latency edge runtime for fast TTFT (Time-To-First-Token)
+export const runtime = "edge";
 
 export async function POST(req: Request) {
   try {
-    const { messages, model, persona } = await req.json();
+    const { messages, model, persona, userContext, temperature, responseLength } = await req.json();
 
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
@@ -14,13 +14,25 @@ export async function POST(req: Request) {
       );
     }
 
-    // Forward client signal for cancellation
     const controller = new AbortController();
     req.signal.addEventListener("abort", () => controller.abort());
 
-    const systemPrompt = persona
-      ? `You are ${persona}. Provide clear, well-structured, high-quality responses.`
-      : "You are a helpful, intelligent AI assistant.";
+    // Context Injection for Time, Date, Timezone & Verbosity
+    const temporalContext = userContext 
+      ? `\n\n[USER ENVIRONMENT & REAL-TIME CONTEXT]:
+- Local Date & Time: ${userContext.dateTime}
+- Timezone: ${userContext.timeZone}
+- Day Period: ${userContext.timeOfDay}
+Always greet and align temporal references accurately according to this local context.`
+      : "";
+
+    const lengthInstruction = responseLength === "concise"
+      ? "\n\nProvide direct, succinct, high-density responses without fluff."
+      : responseLength === "detailed"
+      ? "\n\nProvide highly detailed, comprehensive, structured, and thorough explanations."
+      : "";
+
+    const systemPrompt = (persona || "You are a helpful AI assistant.") + temporalContext + lengthInstruction;
 
     const openRouterResponse = await fetch(
       "https://openrouter.ai/api/v1/chat/completions",
@@ -34,6 +46,7 @@ export async function POST(req: Request) {
         },
         body: JSON.stringify({
           model: model || "google/gemini-2.0-flash-001",
+          temperature: typeof temperature === "number" ? temperature : 0.7,
           messages: [{ role: "system", content: systemPrompt }, ...messages],
           stream: true,
         }),
@@ -42,14 +55,12 @@ export async function POST(req: Request) {
     );
 
     if (!openRouterResponse.ok) {
-      const errorText = await openRouterResponse.text();
       return NextResponse.json(
         { error: `Provider error: ${openRouterResponse.status}` },
         { status: openRouterResponse.status }
       );
     }
 
-    // Stream back directly with unbuffered streaming headers
     return new Response(openRouterResponse.body, {
       headers: {
         "Content-Type": "text/event-stream; charset=utf-8",
@@ -62,7 +73,6 @@ export async function POST(req: Request) {
     if (error.name === "AbortError") {
       return new Response("Stream aborted", { status: 499 });
     }
-    console.error("Chat API Error:", error);
     return NextResponse.json(
       { error: error.message || "Internal server error" },
       { status: 500 }
