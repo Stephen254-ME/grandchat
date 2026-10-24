@@ -1,62 +1,70 @@
 import { NextResponse } from "next/server";
 
+export const runtime = "edge"; // Low latency edge runtime for fast TTFT (Time-To-First-Token)
+
 export async function POST(req: Request) {
   try {
-    const { messages, model } = await req.json();
+    const { messages, model, persona } = await req.json();
 
-    const apiKey =
-      process.env.OPENROUTER_API_KEY ||
-      process.env.GEMINI_API_KEY ||
-      process.env.OPENAI_API_KEY;
-
+    const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
-        { error: "API Key missing in environment variables" },
+        { error: "OpenRouter API Key is missing." },
         { status: 500 }
       );
     }
 
-    // Convert system messages into user/assistant framing if needed to bypass router safety triggers
-    const formattedMessages = messages.map((m: any) => ({
-      role: m.role === "system" ? "user" : m.role,
-      content: m.content,
-    }));
+    // Forward client signal for cancellation
+    const controller = new AbortController();
+    req.signal.addEventListener("abort", () => controller.abort());
 
-    // Selected model or fallback to standard free model
-    const targetModel = model || "meta-llama/llama-3.3-70b-instruct:free";
+    const systemPrompt = persona
+      ? `You are ${persona}. Provide clear, well-structured, high-quality responses.`
+      : "You are a helpful, intelligent AI assistant.";
 
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-        "HTTP-Referer": "http://localhost:3000",
-        "X-Title": "GrandChat AI",
-      },
-      body: JSON.stringify({
-        model: targetModel,
-        messages: formattedMessages,
-        stream: true,
-      }),
-    });
+    const openRouterResponse = await fetch(
+      "https://openrouter.ai/api/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "HTTP-Referer": "https://grandchat.vercel.app",
+          "X-Title": "GrandChat AI",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: model || "google/gemini-2.0-flash-001",
+          messages: [{ role: "system", content: systemPrompt }, ...messages],
+          stream: true,
+        }),
+        signal: controller.signal,
+      }
+    );
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error("OpenRouter Error:", errorText);
-      return NextResponse.json({ error: errorText }, { status: response.status });
+    if (!openRouterResponse.ok) {
+      const errorText = await openRouterResponse.text();
+      return NextResponse.json(
+        { error: `Provider error: ${openRouterResponse.status}` },
+        { status: openRouterResponse.status }
+      );
     }
 
-    return new Response(response.body, {
+    // Stream back directly with unbuffered streaming headers
+    return new Response(openRouterResponse.body, {
       headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
         "Connection": "keep-alive",
+        "X-Content-Type-Options": "nosniff",
       },
     });
   } catch (error: any) {
-    console.error("Server API Catch Error:", error);
+    if (error.name === "AbortError") {
+      return new Response("Stream aborted", { status: 499 });
+    }
+    console.error("Chat API Error:", error);
     return NextResponse.json(
-      { error: error.message || "Internal Server Error" },
+      { error: error.message || "Internal server error" },
       { status: 500 }
     );
   }

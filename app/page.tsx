@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { 
   MessageSquare, Plus, PanelLeftClose, PanelLeft, Sparkles, 
   Code, BookOpen, UserCheck, HelpCircle, Copy, Check, Trash2, Send, LogOut, Lock, Mail,
-  Search, Compass, Feather, Download, ChevronDown, Cpu
+  Search, Compass, Feather, Download, ChevronDown, Cpu, Square, AlertCircle, RefreshCw
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { User } from "@supabase/supabase-js";
@@ -88,6 +88,7 @@ export default function ChatApp() {
   const [isTyping, setIsTyping] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isMounted, setIsMounted] = useState(false);
+  const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
   // New Classic Golden Features State
   const [searchQuery, setSearchQuery] = useState("");
@@ -96,6 +97,7 @@ export default function ChatApp() {
   const [showExportModal, setShowExportModal] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Check Auth State on mount
   useEffect(() => {
@@ -143,7 +145,7 @@ export default function ChatApp() {
           loadedChats.push({
             id: conv.id,
             title: conv.title,
-            messages: msgs ? msgs.map(m => ({ id: m.id, role: m.role as "user" | "assistant", content: m.content })) : []
+            messages: msgs ? msgs.map(m => ({ id: m.id, role: m.role as "user" | "assistant" | "system", content: m.content })) : []
           });
         }
         setChats(loadedChats);
@@ -190,14 +192,27 @@ export default function ChatApp() {
   };
 
   const handleSignOut = async () => {
+    handleStopGeneration();
     await supabase.auth.signOut();
     setUser(null);
     setChats([]);
   };
 
+  // Stop Generation Trigger
+  const handleStopGeneration = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setIsTyping(false);
+    }
+  };
+
   const handleSendMessage = async (textToSend?: string) => {
     const text = textToSend || inputMessage;
-    if (!text.trim() || !user) return;
+    if (!text.trim() || !user || isTyping) return;
+
+    setErrorBanner(null);
+    if (!textToSend) setInputMessage("");
 
     const userMsg: Message = {
       id: Date.now().toString(),
@@ -240,7 +255,6 @@ export default function ChatApp() {
     });
 
     setChats(updatedChats);
-    if (!textToSend) setInputMessage("");
     setIsTyping(true);
 
     const aiMsgId = (Date.now() + 1).toString();
@@ -257,8 +271,11 @@ export default function ChatApp() {
       return chat;
     }));
 
+    // Setup AbortController for stream cancellation
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
-      // Inject persona system prompt dynamically for the request
       const payloadMessages = [
         { role: "system", content: selectedPersona.systemPrompt },
         ...newMessagesList.map(m => ({ role: m.role, content: m.content }))
@@ -271,6 +288,7 @@ export default function ChatApp() {
           messages: payloadMessages,
           model: selectedModel.id 
         }),
+        signal: controller.signal,
       });
 
       if (!response.ok) throw new Error("Failed to generate AI response");
@@ -318,34 +336,31 @@ export default function ChatApp() {
         }
       }
 
-      // Save final AI message to Supabase
-      await supabase.from("messages").insert({
-        id: aiMsgId,
-        conversation_id: currentChatId,
-        role: "assistant",
-        content: accumulatedContent
-      });
+      // Save final AI message to Supabase if content was generated
+      if (accumulatedContent) {
+        await supabase.from("messages").insert({
+          id: aiMsgId,
+          conversation_id: currentChatId,
+          role: "assistant",
+          content: accumulatedContent
+        });
+      }
 
     } catch (err: any) {
-      console.error("AI Streaming Error:", err);
-      const errorMsg = "[Error: Failed to connect to AI provider]";
-      setChats(prev => prev.map(chat => {
-        if (chat.id === currentChatId) {
-          return {
-            ...chat,
-            messages: chat.messages.map(m => 
-              m.id === aiMsgId ? { ...m, content: errorMsg } : m
-            )
-          };
-        }
-        return chat;
-      }));
+      if (err.name === "AbortError") {
+        // Stream aborted gracefully by user
+      } else {
+        console.error("AI Streaming Error:", err);
+        setErrorBanner("Connection lost or request timed out. Please try again.");
+      }
     } finally {
       setIsTyping(false);
+      abortControllerRef.current = null;
     }
   };
 
   const createNewChat = async () => {
+    handleStopGeneration();
     if (!user) return;
     const newChatId = Date.now().toString();
     const newChat: Chat = {
@@ -362,10 +377,12 @@ export default function ChatApp() {
 
     setChats([newChat, ...chats]);
     setActiveChatId(newChat.id);
+    setErrorBanner(null);
   };
 
   const deleteChat = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    handleStopGeneration();
     await supabase.from("conversations").delete().eq("id", id);
 
     const filtered = chats.filter(c => c.id !== id);
@@ -533,7 +550,11 @@ export default function ChatApp() {
           {filteredChats.map(chat => (
             <div
               key={chat.id}
-              onClick={() => setActiveChatId(chat.id)}
+              onClick={() => {
+                handleStopGeneration();
+                setActiveChatId(chat.id);
+                setErrorBanner(null);
+              }}
               className={`group flex items-center justify-between px-3 py-2 rounded-lg text-sm cursor-pointer transition border ${
                 chat.id === activeChatId 
                   ? "bg-amber-500/10 border-amber-500/40 text-amber-200 font-medium" 
@@ -678,8 +699,15 @@ export default function ChatApp() {
                       ? "bg-gradient-to-r from-amber-500 to-amber-600 text-zinc-950 font-medium shadow-md shadow-amber-950/30"
                       : "bg-zinc-900/90 text-amber-50 border border-amber-900/40 shadow-md"
                   }`}>
-                    <p className="whitespace-pre-wrap">{msg.content}</p>
-                    {msg.role === "assistant" && (
+                    {msg.content === "" && msg.role === "assistant" && isTyping ? (
+                      <div className="flex items-center space-x-2 text-amber-400 text-xs font-medium py-1">
+                        <Sparkles className="w-3.5 h-3.5 animate-spin" />
+                        <span>Scribe is contemplating...</span>
+                      </div>
+                    ) : (
+                      <p className="whitespace-pre-wrap">{msg.content}</p>
+                    )}
+                    {msg.role === "assistant" && msg.content && (
                       <div className="absolute right-2 -bottom-3 opacity-0 group-hover:opacity-100 transition flex items-center gap-1 bg-zinc-900 border border-amber-900/50 rounded-md shadow-lg px-2 py-0.5">
                         <button 
                           onClick={() => copyToClipboard(msg.content, msg.id)}
@@ -698,23 +726,33 @@ export default function ChatApp() {
                   )}
                 </div>
               ))}
-
-              {isTyping && activeChat?.messages[activeChat.messages.length - 1]?.content === "" && (
-                <div className="flex gap-4 justify-start">
-                  <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-amber-600 to-amber-400 text-zinc-950 flex items-center justify-center shrink-0 text-xs font-bold">
-                    AI
-                  </div>
-                  <div className="bg-zinc-900/90 border border-amber-900/40 rounded-2xl px-4 py-3 flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-amber-400 animate-bounce"></div>
-                    <div className="w-2 h-2 rounded-full bg-amber-400 animate-bounce [animation-delay:0.2s]"></div>
-                    <div className="w-2 h-2 rounded-full bg-amber-400 animate-bounce [animation-delay:0.4s]"></div>
-                  </div>
-                </div>
-              )}
               <div ref={messagesEndRef} />
             </div>
           )}
         </div>
+
+        {/* Error Retry Banner */}
+        {errorBanner && (
+          <div className="max-w-2xl mx-auto mb-3 px-4 py-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl flex items-center justify-between text-amber-400 text-xs mx-4">
+            <div className="flex items-center space-x-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{errorBanner}</span>
+            </div>
+            <button
+              onClick={() => {
+                const lastUserMsg = [...(activeChat?.messages || [])].reverse().find((m) => m.role === "user");
+                if (lastUserMsg) {
+                  setErrorBanner(null);
+                  handleSendMessage(lastUserMsg.content);
+                }
+              }}
+              className="flex items-center space-x-1 font-semibold hover:underline"
+            >
+              <RefreshCw className="w-3 h-3" />
+              <span>Retry</span>
+            </button>
+          </div>
+        )}
 
         {/* Input Bar Footer */}
         <div className="p-4 border-t border-amber-900/30 bg-zinc-950/80 shrink-0 backdrop-blur-md">
@@ -732,13 +770,24 @@ export default function ChatApp() {
               placeholder={`Ask ${selectedPersona.name} anything... (Press Enter to send)`}
               className="w-full resize-none rounded-xl border border-amber-900/40 bg-zinc-900/80 px-4 py-3 pr-12 text-sm text-amber-50 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-amber-500/60 focus:border-amber-500 transition shadow-inner"
             />
-            <button
-              onClick={() => handleSendMessage()}
-              disabled={!inputMessage.trim()}
-              className="absolute right-3 bottom-3 p-2 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 text-zinc-950 hover:from-amber-400 hover:to-amber-500 disabled:opacity-30 disabled:hover:from-amber-500 disabled:hover:to-amber-600 transition shadow-md shadow-amber-950/40"
-            >
-              <Send className="w-4 h-4" />
-            </button>
+            {isTyping ? (
+              <button
+                type="button"
+                onClick={handleStopGeneration}
+                className="absolute right-3 bottom-3 p-2 rounded-lg bg-zinc-800 text-amber-400 hover:bg-zinc-700 transition shadow-md"
+                title="Stop Generating"
+              >
+                <Square className="w-4 h-4 fill-current" />
+              </button>
+            ) : (
+              <button
+                onClick={() => handleSendMessage()}
+                disabled={!inputMessage.trim()}
+                className="absolute right-3 bottom-3 p-2 rounded-lg bg-gradient-to-r from-amber-500 to-amber-600 text-zinc-950 hover:from-amber-400 hover:to-amber-500 disabled:opacity-30 disabled:hover:from-amber-500 disabled:hover:to-amber-600 transition shadow-md shadow-amber-950/40"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            )}
           </div>
           <p className="text-center text-[11px] text-zinc-500 mt-2">
             GrandChat Gold Edition • Classic Golden Persona & Supabase Sync Active
