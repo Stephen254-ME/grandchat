@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { 
   MessageSquare, Plus, PanelLeftClose, PanelLeft, Sparkles, 
   Code, BookOpen, UserCheck, HelpCircle, Copy, Check, Trash2, Send, LogOut, Lock, Mail,
-  Search, Compass, Feather, Download, ChevronDown, Cpu, Square, AlertCircle, RefreshCw, Edit2, X, Terminal, Settings2, Sliders
+  Search, Compass, Feather, Download, ChevronDown, Cpu, Square, AlertCircle, RefreshCw, Edit2, X, Terminal, Sliders
 } from "lucide-react";
 import { supabase } from "../lib/supabase";
 import { User } from "@supabase/supabase-js";
@@ -86,8 +86,8 @@ function MarkdownRenderer({ content, onCopyCode, copiedCodeId }: { content: stri
           const blockId = `code-${index}`;
 
           return (
-            <div key={index} className="my-3 rounded-xl border border-amber-900/40 bg-zinc-950 overflow-hidden shadow-lg">
-              <div className="flex items-center justify-between px-4 py-2 bg-zinc-900/90 border-b border-amber-900/30 text-xs text-zinc-400">
+            <div key={index} className="my-3 rounded-xl border border-amber-500/20 bg-zinc-950/90 overflow-hidden shadow-xl backdrop-blur-md">
+              <div className="flex items-center justify-between px-4 py-2 bg-zinc-900/80 border-b border-amber-900/30 text-xs text-zinc-400">
                 <div className="flex items-center gap-2">
                   <Terminal className="w-3.5 h-3.5 text-amber-500" />
                   <span className="font-mono text-amber-200/80 lowercase">{language}</span>
@@ -146,12 +146,10 @@ export default function ChatApp() {
   const [isMounted, setIsMounted] = useState(false);
   const [errorBanner, setErrorBanner] = useState<string | null>(null);
 
-  // Renaming State & Delete Confirmation
   const [renamingChatId, setRenamingChatId] = useState<string | null>(null);
   const [renameInput, setRenameInput] = useState("");
   const [deletingChatId, setDeletingChatId] = useState<string | null>(null);
 
-  // Classic Golden Features & Scribe Customization State
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedPersona, setSelectedPersona] = useState<Persona>(PERSONAS[0]);
   const [selectedModel, setSelectedModel] = useState(MODELS[0]);
@@ -164,7 +162,6 @@ export default function ChatApp() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Auto-resize textarea as prompt grows
   const adjustTextareaHeight = () => {
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -176,7 +173,6 @@ export default function ChatApp() {
     adjustTextareaHeight();
   }, [inputMessage]);
 
-  // Keyboard Shortcuts (Escape closes modals)
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.key === "Escape") {
       setShowExportModal(false);
@@ -250,7 +246,6 @@ export default function ChatApp() {
 
   const activeChat = chats.find(c => c.id === activeChatId) || chats[0];
 
-  // Auto-scroll to bottom on load and message updates
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [activeChatId, activeChat?.messages?.length, isTyping]);
@@ -335,7 +330,6 @@ export default function ChatApp() {
     }
   };
 
-  // User Local Time / Date Context Generator
   const getUserTimeContext = () => {
     const now = new Date();
     const hours = now.getHours();
@@ -471,7 +465,7 @@ export default function ChatApp() {
                   }));
                 }
               } catch (e) {
-                // Ignore incomplete chunks
+                // Ignore incomplete lines
               }
             }
           }
@@ -872,7 +866,7 @@ export default function ChatApp() {
                       key={idx}
                       type="button"
                       onClick={() => handleSendMessage(item.prompt)}
-                      className="p-4 rounded-xl border border-amber-900/30 hover:border-amber-500/60 bg-zinc-900/40 hover:bg-amber-950/20 text-left transition flex flex-col gap-2 group shadow-sm"
+                      className="p-4 rounded-xl border border-amber-900/30 hover:border-amber-500/60 bg-zinc-900/40 hover:bg-amber-950/20 text-left transition flex flex-col gap-2 group shadow-sm hover:-translate-y-0.5 transition-transform"
                     >
                       <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 group-hover:bg-amber-500 group-hover:text-zinc-950 transition">
                         <Icon className="w-4 h-4" />
@@ -896,43 +890,47 @@ export default function ChatApp() {
                       AI
                     </div>
                   )}
-                  <div className={`group relative max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                    msg.role === "user"
-                      ? "bg-gradient-to-r from-amber-500 to-amber-600 text-zinc-950 font-medium shadow-md shadow-amber-950/30"
-                      : "bg-zinc-900/90 text-amber-50 border border-amber-900/40 shadow-md"
-                  }`}>
-                    {msg.content === "" && msg.role === "assistant" && isTyping ? (
-                      <div className="flex items-center space-x-2 text-amber-400 text-xs font-medium py-1">
-                        <Sparkles className="w-3.5 h-3.5 animate-spin" />
-                        <span>Scribe is contemplating...</span>
-                      </div>
-                    ) : (
+
+                  {msg.content === "" && msg.role === "assistant" && isTyping ? (
+                    /* Borderless Shimmering Loading Line (No Box Artifact) */
+                    <div className="flex items-center space-x-2 py-2 text-amber-400/90 text-xs font-medium">
+                      <Sparkles className="w-4 h-4 animate-spin text-amber-400" />
+                      <span className="animate-pulse">Scribe is contemplating...</span>
+                    </div>
+                  ) : (
+                    <div className={`group relative max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                      msg.role === "user"
+                        ? "bg-gradient-to-r from-amber-500 to-amber-600 text-zinc-950 font-medium shadow-md shadow-amber-950/30"
+                        : "bg-zinc-900/90 text-amber-50 border border-amber-900/40 shadow-md"
+                    }`}>
                       <MarkdownRenderer content={msg.content} onCopyCode={copyCodeToClipboard} copiedCodeId={copiedCodeId} />
-                    )}
-                    {msg.role === "assistant" && msg.content && (
-                      <div className="absolute right-2 -bottom-3 opacity-0 group-hover:opacity-100 transition flex items-center gap-1 bg-zinc-900 border border-amber-900/50 rounded-md shadow-lg px-2 py-0.5">
-                        <button 
-                          type="button"
-                          onClick={() => copyToClipboard(msg.content, msg.id)}
-                          className="text-amber-400/80 hover:text-amber-300 flex items-center gap-1 text-xs"
-                        >
-                          {copiedId === msg.id ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                          <span>{copiedId === msg.id ? "Copied" : "Copy"}</span>
-                        </button>
-                        {idx === arr.length - 1 && !isTyping && (
-                          <button
+                      
+                      {msg.role === "assistant" && msg.content && (
+                        <div className="absolute right-2 -bottom-3 opacity-0 group-hover:opacity-100 transition flex items-center gap-1 bg-zinc-900 border border-amber-900/50 rounded-md shadow-lg px-2 py-0.5">
+                          <button 
                             type="button"
-                            onClick={handleRegenerateResponse}
-                            className="text-amber-400/80 hover:text-amber-300 flex items-center gap-1 text-xs pl-1 border-l border-zinc-700"
-                            title="Regenerate Response"
+                            onClick={() => copyToClipboard(msg.content, msg.id)}
+                            className="text-amber-400/80 hover:text-amber-300 flex items-center gap-1 text-xs"
                           >
-                            <RefreshCw className="w-3 h-3" />
-                            <span>Retry</span>
+                            {copiedId === msg.id ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                            <span>{copiedId === msg.id ? "Copied" : "Copy"}</span>
                           </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                          {idx === arr.length - 1 && !isTyping && (
+                            <button
+                              type="button"
+                              onClick={handleRegenerateResponse}
+                              className="text-amber-400/80 hover:text-amber-300 flex items-center gap-1 text-xs pl-1 border-l border-zinc-700"
+                              title="Regenerate Response"
+                            >
+                              <RefreshCw className="w-3 h-3" />
+                              <span>Retry</span>
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {msg.role === "user" && (
                     <div className="w-8 h-8 rounded-full bg-zinc-800 border border-amber-900/40 text-amber-300 flex items-center justify-center shrink-0 text-xs font-bold">
                       U
@@ -963,9 +961,9 @@ export default function ChatApp() {
           </div>
         )}
 
-        {/* Auto-Resizing Input Bar */}
+        {/* Floating Command Composer Bar */}
         <div className="p-4 border-t border-amber-900/30 bg-zinc-950/80 shrink-0 backdrop-blur-md">
-          <div className="max-w-3xl mx-auto relative">
+          <div className="max-w-3xl mx-auto relative shadow-[0_0_20px_rgba(245,158,11,0.06)] rounded-xl">
             <textarea
               ref={textareaRef}
               rows={1}
@@ -978,7 +976,7 @@ export default function ChatApp() {
                 }
               }}
               placeholder={`Ask ${selectedPersona.name} anything... (Press Enter to send)`}
-              className="w-full resize-none rounded-xl border border-amber-900/40 bg-zinc-900/80 px-4 py-3 pr-12 text-sm text-amber-50 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-amber-500/60 focus:border-amber-500 transition shadow-inner overflow-y-auto max-h-44"
+              className="w-full resize-none rounded-xl border border-amber-900/40 bg-zinc-900/90 px-4 py-3 pr-12 text-sm text-amber-50 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-amber-500/60 focus:border-amber-500 transition shadow-inner overflow-y-auto max-h-44"
             />
             {isTyping ? (
               <button
@@ -1001,7 +999,7 @@ export default function ChatApp() {
             )}
           </div>
           <p className="text-center text-[11px] text-zinc-500 mt-2">
-            GrandChat Gold Edition • Auto-Time Sync Active • Shift+Enter for line break
+            GrandChat By Mugisha
           </p>
         </div>
 
@@ -1035,7 +1033,7 @@ export default function ChatApp() {
         </div>
       )}
 
-      {/* Scribe Parameters / Tuning Modal */}
+      {/* Scribe Parameters Modal */}
       {showSettingsModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-zinc-900 border border-amber-900/50 rounded-2xl max-w-md w-full p-6 space-y-5 shadow-2xl">
